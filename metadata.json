@@ -1,0 +1,6 @@
+{
+  "name": "Nông Trại Tri Thức",
+  "description": "Website học tập tương tác bằng AI biến việc học thành trò chơi xây dựng nông trại dành cho học sinh THCS từ lớp 6 đến lớp 9.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
