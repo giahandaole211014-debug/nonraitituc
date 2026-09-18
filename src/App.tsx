@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { UserRole, StudentGrade, StudentProfile, AppNotification, Plant } from "./types";
-import { studentsData, mockParent, mockTeacher, mockLeaderboard, mockNotifications } from "./data/mockData";
+import { defaultNewStudent, studentsData, mockParent, mockTeacher, mockLeaderboard } from "./data/mockData";
 import { Navbar } from "./components/Navbar";
 import { HomeHero } from "./components/HomeHero";
 import { MyFarmView } from "./components/MyFarmView";
@@ -13,14 +13,13 @@ import { TeacherDashboardView } from "./components/TeacherDashboardView";
 import { LeaderboardView } from "./components/LeaderboardView";
 import { AuthModal } from "./components/AuthModal";
 
-// Real Supabase Auth & Profile pages
+// Real Auth & Profile pages
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { RegisterPage } from "./components/RegisterPage";
 import { LoginPage } from "./components/LoginPage";
 import { ForgotPasswordPage } from "./components/ForgotPasswordPage";
 import { ResetPasswordPage } from "./components/ResetPasswordPage";
 import { ProfilePage } from "./components/ProfilePage";
-import { SupabaseConfigModal } from "./components/SupabaseConfigModal";
 import { Sparkles, Sprout, ArrowRight } from "lucide-react";
 
 function MainApp() {
@@ -58,16 +57,64 @@ function MainApp() {
   const [currentTab, setCurrentTab] = useState<string>(getInitialTab);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState<boolean>(false);
 
   // Active Student State
-  const [student, setStudent] = useState<StudentProfile>(studentsData["giahan7"]);
+  const [student, setStudent] = useState<StudentProfile>(defaultNewStudent);
   // Active Parent & Teacher State
   const [parent, setParent] = useState(mockParent);
   const [teacher, setTeacher] = useState(mockTeacher);
-  // Notifications & Leaderboard
-  const [notifications, setNotifications] = useState<AppNotification[]>(mockNotifications);
+  // Notifications & Leaderboard (Starts empty for new users; loaded per-account)
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      const storedUser = localStorage.getItem("nongtrai_auth_user");
+      if (storedUser) {
+        const u = JSON.parse(storedUser);
+        if (u?.id) {
+          const userNotifs = localStorage.getItem(`nongtrai_notifications_${u.id}`);
+          if (userNotifs) {
+            const parsed = JSON.parse(userNotifs);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return [];
+  });
   const [leaderboard, setLeaderboard] = useState(mockLeaderboard);
+
+  // Synchronize notifications per authenticated user
+  useEffect(() => {
+    if (!user?.id) {
+      setNotifications([]);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(`nongtrai_notifications_${user.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setNotifications(parsed);
+          return;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    // New account: empty notification state
+    setNotifications([]);
+  }, [user?.id]);
+
+  // Persist notifications for current authenticated user
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      localStorage.setItem(`nongtrai_notifications_${user.id}`, JSON.stringify(notifications));
+    } catch (e) {
+      // ignore
+    }
+  }, [notifications, user?.id]);
 
   // Section 10: Check if route requires authentication
   const isProtectedRoute = (path: string) => {
@@ -228,6 +275,7 @@ function MainApp() {
     // Add celebration notification
     const newNotif: AppNotification = {
       id: `harvest-${Date.now()}`,
+      userId: user?.id,
       recipientRole: "student",
       title: "🧺 Bội thu tri thức!",
       message: "Bạn đã thu hoạch thành công trái ngọt từ nông trại. Nhận +50 Xu tri thức & +150 Điểm!",
@@ -344,10 +392,24 @@ function MainApp() {
       const task = prev.dailyTasks.find((t) => t.id === taskId);
       const rewardCoins = task?.rewardCoins || 30;
       const rewardExp = task?.rewardExp || 100;
+      const taskTitle = task?.title || "Nhiệm vụ học tập";
 
       const updatedTasks = prev.dailyTasks.map((t) =>
         t.id === taskId ? { ...t, isCompleted: true } : t
       );
+
+      // Trigger a real notification when the student actually completes the task
+      const newNotif: AppNotification = {
+        id: `task-done-${Date.now()}`,
+        userId: user?.id,
+        recipientRole: "student",
+        title: "🌟 Hoàn thành bài học!",
+        message: `Em đã hoàn thành "${taskTitle}", nhận thưởng +${rewardCoins} Xu và +${rewardExp} Điểm tri thức.`,
+        timestamp: "Vừa xong",
+        isRead: false,
+        type: "task",
+      };
+      setNotifications((oldNotifs) => [newNotif, ...oldNotifs]);
 
       return {
         ...prev,
@@ -399,6 +461,7 @@ function MainApp() {
   const handleSendFeedbackToParent = (studentName: string, message: string) => {
     const newFeedbackNotif: AppNotification = {
       id: `teacher-feedback-${Date.now()}`,
+      userId: user?.id,
       recipientRole: "parent",
       title: `Nhận xét mới từ Cô Mai Lan`,
       message: `Giáo viên chủ nhiệm gửi nhận xét về em ${studentName}: "${message}"`,
@@ -461,6 +524,7 @@ function MainApp() {
 
     const newNotif: AppNotification = {
       id: `notif-new-task-${Date.now()}`,
+      userId: user?.id,
       recipientRole: "student",
       title: "Nhiệm vụ mới từ Giáo viên!",
       message: `Cô Mai Lan vừa giao bài: "${title}". Hãy hoàn thành để rinh ${rewardItem}!`,
@@ -469,6 +533,25 @@ function MainApp() {
       type: "task",
     };
     setNotifications((prev) => [newNotif, ...prev]);
+  };
+
+  const handleAddStudentToTeacher = (studentName: string) => {
+    setTeacher((prev) => ({
+      ...prev,
+      students: [
+        ...prev.students,
+        {
+          id: `st-${Date.now()}`,
+          name: studentName,
+          grade: currentGrade,
+          mathScore: 0,
+          litScore: 0,
+          sciScore: 0,
+          progressTrend: "--",
+          recentMistakes: [],
+        },
+      ],
+    }));
   };
 
   return (
@@ -489,7 +572,6 @@ function MainApp() {
         notifications={notifications}
         onMarkNotificationRead={handleMarkNotificationRead}
         onQuickSwitchRole={handleQuickSwitchRole}
-        onOpenSupabaseConfig={() => setIsConfigModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -560,11 +642,10 @@ function MainApp() {
           </div>
         )}
 
-        {/* Supabase Authentication Pages */}
+        {/* Authentication Pages */}
         {currentTab === "/register" && (
           <RegisterPage
             onNavigate={handleSelectTab}
-            onOpenConfig={() => setIsConfigModalOpen(true)}
           />
         )}
 
@@ -572,7 +653,6 @@ function MainApp() {
           <LoginPage
             onNavigate={handleSelectTab}
             onLoginSuccess={() => handleSelectTab("/dashboard")}
-            onOpenConfig={() => setIsConfigModalOpen(true)}
             noticeMessage={authNotice}
           />
         )}
@@ -649,7 +729,11 @@ function MainApp() {
 
         {/* Parent Dashboard (/parent-dashboard, /parent, parent) */}
         {(currentTab === "parent" || currentTab === "/parent" || currentTab === "/parent-dashboard") && (
-          <ParentDashboardView parent={parent} student={student} />
+          <ParentDashboardView
+            parent={parent}
+            student={student}
+            onNavigate={handleSelectTab}
+          />
         )}
 
         {currentTab === "teacher" && (
@@ -657,6 +741,7 @@ function MainApp() {
             teacher={teacher}
             onSendFeedbackToParent={handleSendFeedbackToParent}
             onAssignNewTaskToClass={handleAssignNewTask}
+            onAddStudent={handleAddStudentToTeacher}
           />
         )}
       </main>
@@ -669,13 +754,6 @@ function MainApp() {
             <span>• Nền tảng học tập tương tác Gamification THCS Lớp 6 - 9</span>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsConfigModalOpen(true)}
-              className="text-[11px] text-stone-400 hover:text-emerald-700 underline cursor-pointer"
-            >
-              Cấu hình Supabase Thật
-            </button>
-            <span>•</span>
             <span>“Mỗi câu trả lời đúng – Một mầm cây lớn. Mỗi bài học hoàn thành – Một mùa thu hoạch.”</span>
           </div>
         </div>
@@ -686,12 +764,6 @@ function MainApp() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onSelectRole={handleQuickSwitchRole}
-      />
-
-      {/* Supabase Connection Setup Modal */}
-      <SupabaseConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
       />
     </div>
   );

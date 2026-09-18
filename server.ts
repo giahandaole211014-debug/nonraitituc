@@ -1,8 +1,25 @@
 import express from "express";
 import path from "path";
+import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import {
+  findUserByEmail,
+  findUserById,
+  upsertGoogleUser,
+  registerEmailUser,
+  updateUserProfile,
+  syncUserProgress,
+  createSession,
+  getUserBySession,
+  removeSession,
+  createLinkRequest,
+  getLinkingOverview,
+  respondToLinkRequest,
+  unlinkAccount,
+  getLinkedStudentDataForParent,
+} from "./server/db";
 
 dotenv.config();
 
@@ -10,6 +27,280 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// Helper auth middleware
+function getAuthUser(req: express.Request) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.substring(7)
+    : (req.query.token as string);
+  if (!token) return null;
+  return getUserBySession(token);
+}
+
+// -------------------------------------------------------------
+// AUTHENTICATION & PROFILE APIS (No Supabase, Real Google OAuth)
+// -------------------------------------------------------------
+
+// 1. Google OAuth Authentication Endpoint
+app.post("/api/auth/google", (req, res) => {
+  const { googleId, email, fullName, avatarUrl, role = "student", grade = 7 } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ success: false, error: "Email Google là bắt buộc." });
+  }
+
+  // If googleId was not provided, generate a deterministic one based on email
+  const effectiveGoogleId = googleId || `gid_${crypto.createHash("sha256").update(email.toLowerCase()).digest("hex").slice(0, 21)}`;
+
+  try {
+    const user = upsertGoogleUser({
+      googleId: effectiveGoogleId,
+      email,
+      fullName,
+      avatarUrl,
+      role,
+      grade,
+    });
+
+    const token = createSession(user.id);
+    return res.json({
+      success: true,
+      token,
+      user,
+    });
+  } catch (err: any) {
+    console.error("Google Auth error:", err);
+    return res.status(500).json({ success: false, error: "Lỗi đăng nhập Google." });
+  }
+});
+
+// 2. Email / Password Registration
+app.post("/api/auth/register", (req, res) => {
+  const { email, password, fullName, role = "student", grade = 7 } = req.body;
+
+  if (!email || !password || !fullName) {
+    return res.status(400).json({ success: false, error: "Vui lòng điền đầy đủ thông tin." });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({ success: false, error: "Mật khẩu phải có tối thiểu 8 ký tự." });
+  }
+
+  const passwordHash = crypto.createHash("sha256").update(password + "_salt_nongtrai").digest("hex");
+  const result = registerEmailUser({
+    email,
+    passwordHash,
+    fullName,
+    role,
+    grade,
+  });
+
+  if (!result.success || !result.user) {
+    return res.status(400).json(result);
+  }
+
+  const token = createSession(result.user.id);
+  return res.json({
+    success: true,
+    token,
+    user: result.user,
+  });
+});
+
+// 3. Email / Password Login
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: "Vui lòng nhập email và mật khẩu." });
+  }
+
+  const user = findUserByEmail(email);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Tài khoản không tồn tại hoặc sai mật khẩu." });
+  }
+
+  const passwordHash = crypto.createHash("sha256").update(password + "_salt_nongtrai").digest("hex");
+  if (user.passwordHash && user.passwordHash !== passwordHash) {
+    return res.status(401).json({ success: false, error: "Mật khẩu không chính xác." });
+  }
+
+  const token = createSession(user.id);
+  return res.json({
+    success: true,
+    token,
+    user,
+  });
+});
+
+// 4. Get Current User Session & Profile
+app.get("/api/auth/me", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+  return res.json({ success: true, user });
+});
+
+// 5. Logout
+app.post("/api/auth/logout", (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : (req.body.token as string);
+  if (token) {
+    removeSession(token);
+  }
+  return res.json({ success: true });
+});
+
+// 6. Update Profile
+app.post("/api/auth/profile", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  const { fullName, avatarUrl, grade } = req.body;
+  const updated = updateUserProfile(user.id, { fullName, avatarUrl, grade });
+  if (!updated) {
+    return res.status(400).json({ success: false, error: "Không thể cập nhật hồ sơ." });
+  }
+
+  return res.json({ success: true, user: updated });
+});
+
+// 7. Sync Learning Progress (Gamified Farm data persistence)
+app.post("/api/user/sync-progress", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  const {
+    knowledgePoints,
+    coins,
+    currentStreak,
+    totalPlanted,
+    totalHarvested,
+    plants,
+    badges,
+  } = req.body;
+
+  const updated = syncUserProgress(user.id, {
+    knowledgePoints,
+    coins,
+    currentStreak,
+    totalPlanted,
+    totalHarvested,
+    plants,
+    badges,
+  });
+
+  return res.json({ success: true, user: updated });
+});
+
+// -------------------------------------------------------------
+// ACCOUNT LINKING APIS (Phụ huynh - Học sinh verification)
+// -------------------------------------------------------------
+
+// 8. Get user's links & requests
+app.get("/api/linking/overview", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  const overview = getLinkingOverview(user.id);
+  return res.json({
+    success: true,
+    myLinkCode: user.linkCode,
+    myRole: user.role,
+    ...overview,
+  });
+});
+
+// 9. Send a link request by code or email
+app.post("/api/linking/request", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  const { targetCodeOrEmail } = req.body;
+  if (!targetCodeOrEmail) {
+    return res.status(400).json({ success: false, error: "Vui lòng nhập mã liên kết hoặc email." });
+  }
+
+  const result = createLinkRequest(user, targetCodeOrEmail);
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  return res.json({ success: true, link: result.link });
+});
+
+// 10. Respond to link request (accept / reject)
+app.post("/api/linking/respond", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  const { linkId, action } = req.body;
+  if (!linkId || !action || !["accept", "reject"].includes(action)) {
+    return res.status(400).json({ success: false, error: "Dữ liệu không hợp lệ." });
+  }
+
+  const result = respondToLinkRequest(user.id, linkId, action);
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  return res.json({ success: true });
+});
+
+// 11. Unlink account
+app.post("/api/linking/unlink", (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  const { linkId } = req.body;
+  if (!linkId) {
+    return res.status(400).json({ success: false, error: "Thiếu mã liên kết." });
+  }
+
+  const result = unlinkAccount(user.id, linkId);
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  return res.json({ success: true });
+});
+
+// 12. Get Student Data for Linked Parent
+app.get("/api/parent/student-data/:studentId", (req, res) => {
+  const parent = getAuthUser(req);
+  if (!parent) {
+    return res.status(401).json({ success: false, error: "Chưa đăng nhập." });
+  }
+
+  if (parent.role !== "parent") {
+    return res.status(403).json({ success: false, error: "Chỉ phụ huynh mới có quyền truy cập." });
+  }
+
+  const { studentId } = req.params;
+  const student = getLinkedStudentDataForParent(parent.id, studentId);
+  if (!student) {
+    return res.status(403).json({
+      success: false,
+      error: "Không có quyền xem dữ liệu của học sinh này hoặc hai tài khoản chưa được xác nhận liên kết.",
+    });
+  }
+
+  return res.json({ success: true, student });
+});
 
 // Lazy-initialized Gemini client with required User-Agent
 let aiClient: GoogleGenAI | null = null;

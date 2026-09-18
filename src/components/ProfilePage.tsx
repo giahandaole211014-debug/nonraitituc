@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { getSupabase } from "../lib/supabase";
 import {
   User,
   Mail,
@@ -18,6 +17,13 @@ import {
   X,
   Upload,
   Sparkles,
+  Link as LinkIcon,
+  Copy,
+  UserCheck,
+  UserX,
+  Check,
+  Clock,
+  ArrowRight,
 } from "lucide-react";
 
 interface ProfilePageProps {
@@ -25,20 +31,33 @@ interface ProfilePageProps {
 }
 
 const AVATAR_OPTIONS = [
-  "👧", "👦", "🧑", "👩", "🧒", "👨", "🌱", "🦉", "🦁", "🦊", "🐼", "🚀"
+  "🌱", "👧", "👦", "🧑", "👩", "🧒", "👨", "🦉", "🦁", "🦊", "🐼", "🚀"
 ];
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
-  const { user, profile, updateProfile, refreshProfile } = useAuth();
+  const {
+    user,
+    profile,
+    updateProfile,
+    refreshProfile,
+    linkingState,
+    sendLinkRequest,
+    respondLinkRequest,
+    unlinkAccountRequest,
+  } = useAuth();
 
   const [isEditing, setIsEditing] = useState(false);
   const [editFullName, setEditFullName] = useState(profile?.fullName || "");
-  const [selectedAvatar, setSelectedAvatar] = useState(profile?.avatarUrl || "👧");
+  const [selectedAvatar, setSelectedAvatar] = useState(profile?.avatarUrl || "🌱");
   const [editGrade, setEditGrade] = useState(profile?.grade || 7);
 
   const [loading, setLoading] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Link input state
+  const [targetCodeOrEmail, setTargetCodeOrEmail] = useState("");
+  const [linkingLoading, setLinkingLoading] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   if (!user && !profile) {
     return (
@@ -79,52 +98,23 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
       })
     : "Chưa xác định";
 
-  // Handle avatar upload to Supabase Storage if file selected
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !user) return;
+    if (!file) return;
 
-    // Validate size (< 2MB)
-    if (file.size > 2 * 1024 * 1024) {
-      setStatusMessage({ type: "error", text: "Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 2MB." });
+    if (file.size > 1.5 * 1024 * 1024) {
+      setStatusMessage({ type: "error", text: "Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 1.5MB." });
       return;
     }
 
-    const supabase = getSupabase();
-    if (!supabase) return;
-
-    setUploadingImage(true);
-    setStatusMessage(null);
-
-    try {
-      const fileExt = file.name.split(".").pop();
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`;
-      const filePath = `avatars/${fileName}`;
-
-      // Upload to Supabase Storage bucket 'avatars'
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(filePath, file, { upsert: true });
-
-      if (uploadError) {
-        // If storage bucket is not created or restricted, inform smoothly
-        console.warn("Storage upload error:", uploadError);
-        setStatusMessage({
-          type: "error",
-          text: "Chưa cấu hình Supabase Storage bucket 'avatars'. Bạn có thể chọn biểu tượng avatar có sẵn bên dưới!",
-        });
-      } else {
-        const { data: publicUrlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
-        if (publicUrlData?.publicUrl) {
-          setSelectedAvatar(publicUrlData.publicUrl);
-          setStatusMessage({ type: "success", text: "Đã tải lên ảnh đại diện mới thành công!" });
-        }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setSelectedAvatar(reader.result);
+        setStatusMessage({ type: "success", text: "Đã chọn ảnh đại diện. Nhấn 'Lưu thay đổi' để hoàn tất!" });
       }
-    } catch (err: any) {
-      setStatusMessage({ type: "error", text: err.message || "Lỗi tải ảnh." });
-    } finally {
-      setUploadingImage(false);
-    }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSave = async () => {
@@ -154,12 +144,44 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
   const handleCancel = () => {
     setIsEditing(false);
     setEditFullName(profile?.fullName || "");
-    setSelectedAvatar(profile?.avatarUrl || "👧");
+    setSelectedAvatar(profile?.avatarUrl || "🌱");
     setEditGrade(profile?.grade || 7);
     setStatusMessage(null);
   };
 
-  const isImageAvatar = selectedAvatar.startsWith("http://") || selectedAvatar.startsWith("https://");
+  const handleCopyLinkCode = () => {
+    if (profile?.linkCode) {
+      navigator.clipboard.writeText(profile.linkCode);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    }
+  };
+
+  const handleSendLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetCodeOrEmail.trim()) return;
+
+    setLinkingLoading(true);
+    setStatusMessage(null);
+
+    const res = await sendLinkRequest(targetCodeOrEmail.trim());
+    setLinkingLoading(false);
+
+    if (res.success) {
+      setTargetCodeOrEmail("");
+      setStatusMessage({
+        type: "success",
+        text: "Đã gửi yêu cầu liên kết thành công! Hãy nhờ người thân xác nhận trong tài khoản của họ.",
+      });
+    } else {
+      setStatusMessage({
+        type: "error",
+        text: res.error || "Không thể gửi yêu cầu liên kết.",
+      });
+    }
+  };
+
+  const isImageAvatar = selectedAvatar.startsWith("http://") || selectedAvatar.startsWith("https://") || selectedAvatar.startsWith("data:image");
 
   return (
     <div className="max-w-4xl mx-auto py-6 sm:py-10 space-y-6 animate-in fade-in">
@@ -215,7 +237,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
                     accept="image/*"
                     onChange={handleImageUpload}
                     className="hidden"
-                    disabled={uploadingImage}
                   />
                 </label>
               )}
@@ -261,7 +282,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
                 onClick={() => {
                   setIsEditing(true);
                   setEditFullName(profile?.fullName || "");
-                  setSelectedAvatar(profile?.avatarUrl || "👧");
+                  setSelectedAvatar(profile?.avatarUrl || "🌱");
                   setEditGrade(profile?.grade || 7);
                 }}
                 className="px-4 py-2 bg-stone-100 hover:bg-emerald-50 hover:text-emerald-700 text-stone-700 font-bold text-xs rounded-xl border border-stone-200 flex items-center gap-1.5 cursor-pointer transition-colors"
@@ -279,12 +300,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
             <div className="bg-amber-50/70 border border-amber-200/60 rounded-2xl p-3 text-xs text-amber-900 flex items-center gap-2">
               <Shield className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
-                <strong>Lưu ý bảo mật:</strong> Bạn chỉ được phép chỉnh sửa Họ tên, Ảnh đại diện và Khối lớp. Vai trò hệ thống và Email được bảo vệ nghiêm ngặt để đảm bảo an toàn.
+                <strong>Lưu ý:</strong> Bạn có thể chỉnh sửa Họ tên, Ảnh đại diện và Khối lớp.
               </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Họ và tên */}
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1">
                   Họ và tên <span className="text-red-500">*</span>
@@ -297,7 +317,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
                 />
               </div>
 
-              {/* Khối lớp nếu là học sinh */}
               {profile?.role === "student" && (
                 <div>
                   <label className="block text-xs font-bold text-stone-700 mb-1">
@@ -317,7 +336,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
               )}
             </div>
 
-            {/* Chọn nhanh Avatar */}
+            {/* Quick avatar selector */}
             <div>
               <label className="block text-xs font-bold text-stone-700 mb-1.5">
                 Chọn biểu tượng đại diện hoặc tải ảnh lên:
@@ -344,7 +363,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
 
         {/* User System Details Grid */}
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4 pt-6 border-t border-stone-100">
-          {/* Vai trò */}
+          {/* Role */}
           <div className="p-4 rounded-2xl bg-stone-50 border border-stone-100 flex items-start gap-3">
             <div className="p-2.5 rounded-xl bg-blue-100 text-blue-700">
               <Shield className="w-5 h-5" />
@@ -359,7 +378,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
                   : "Phụ huynh"}
               </span>
               <span className="text-[10px] text-emerald-700 block mt-0.5">
-                ✓ Được phân quyền bởi Supabase Auth
+                ✓ Được xác thực an toàn
               </span>
             </div>
           </div>
@@ -377,7 +396,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
                 {profile?.email}
               </span>
               <div className="flex items-center gap-1.5 mt-1">
-                {user?.app_metadata?.provider === "google" ? (
+                {profile?.googleId ? (
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
                     <svg className="w-3 h-3 shrink-0" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -390,14 +409,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
                 ) : (
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                     <CheckCircle2 className="w-3 h-3" />
-                    Supabase Auth
+                    Tài khoản Email
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Ngày tham gia */}
+          {/* Joined Date */}
           <div className="p-4 rounded-2xl bg-stone-50 border border-stone-100 flex items-start gap-3">
             <div className="p-2.5 rounded-xl bg-purple-100 text-purple-700">
               <Calendar className="w-5 h-5" />
@@ -414,6 +433,153 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
               </span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ACCOUNT LINKING SECTION (Phụ huynh & Học sinh xác nhận liên kết 2 chiều) */}
+      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-emerald-100 shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+              <LinkIcon className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-display font-black text-xl text-stone-900">
+                Liên Kết Tài Khoản Gia Đình (Phụ huynh ↔ Học sinh)
+              </h2>
+              <p className="text-xs text-stone-500">
+                Bảo vệ dữ liệu: Phụ huynh chỉ xem được dữ liệu của con khi cả hai bên đã xác nhận liên kết.
+              </p>
+            </div>
+          </div>
+
+          {/* User's own Link Code pill */}
+          <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 px-3.5 py-2 rounded-2xl">
+            <div>
+              <span className="text-[10px] uppercase font-black text-indigo-500 block">Mã liên kết của bạn:</span>
+              <span className="font-mono font-black text-sm text-indigo-900 tracking-wider">
+                {profile?.linkCode || linkingState.myLinkCode || "Đang tải..."}
+              </span>
+            </div>
+            <button
+              onClick={handleCopyLinkCode}
+              title="Sao chép mã"
+              className="p-1.5 hover:bg-indigo-100 rounded-xl text-indigo-700 cursor-pointer transition-colors"
+            >
+              {copiedCode ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Input to send link request */}
+        <form onSubmit={handleSendLink} className="p-4 rounded-2xl bg-stone-50 border border-stone-200 flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <input
+              type="text"
+              value={targetCodeOrEmail}
+              onChange={(e) => setTargetCodeOrEmail(e.target.value)}
+              placeholder={
+                profile?.role === "parent"
+                  ? "Nhập mã liên kết của con (VD: HS-5821) hoặc email..."
+                  : "Nhập mã liên kết của phụ huynh (VD: PH-3914) hoặc email..."
+              }
+              className="w-full px-4 py-2.5 bg-white border border-stone-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-medium text-stone-800"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={linkingLoading || !targetCodeOrEmail.trim()}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer flex items-center justify-center gap-2"
+          >
+            {linkingLoading ? "Đang gửi..." : "Gửi yêu cầu liên kết"}
+          </button>
+        </form>
+
+        {/* Incoming Pending Requests (Need confirmation) */}
+        {linkingState.incomingRequests && linkingState.incomingRequests.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-xs font-black text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-amber-600" />
+              <span>Yêu cầu liên kết đang chờ bạn xác nhận:</span>
+            </h3>
+            <div className="space-y-2">
+              {linkingState.incomingRequests.map((req) => (
+                <div
+                  key={req.id}
+                  className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 flex items-center justify-between gap-3"
+                >
+                  <div>
+                    <p className="text-xs font-bold text-stone-900">
+                      {req.requesterName}{" "}
+                      <span className="text-[11px] font-normal text-stone-500">({req.requesterEmail})</span>
+                    </p>
+                    <p className="text-[10px] text-amber-700 mt-0.5">
+                      Vai trò: {req.requesterRole === "parent" ? "👨👩👧 Phụ huynh" : "🌱 Học sinh"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => respondLinkRequest(req.id, "accept")}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1 cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Chấp nhận
+                    </button>
+                    <button
+                      onClick={() => respondLinkRequest(req.id, "reject")}
+                      className="px-3 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-bold rounded-xl cursor-pointer"
+                    >
+                      Từ chối
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Active Linked Accounts */}
+        <div>
+          <h3 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-3">
+            Danh sách tài khoản đã xác nhận liên kết ({linkingState.linkedAccounts.length})
+          </h3>
+          {linkingState.linkedAccounts.length === 0 ? (
+            <div className="p-6 rounded-2xl border border-dashed border-stone-200 text-center text-xs text-stone-500">
+              Chưa có tài khoản nào được liên kết. Hãy chia sẻ mã liên kết của bạn với gia đình để kết nối!
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {linkingState.linkedAccounts.map((link) => (
+                <div
+                  key={link.linkId}
+                  className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center text-lg font-bold">
+                      {link.role === "student" ? "🌱" : "👨👩👧"}
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs sm:text-sm text-stone-900">{link.name}</h4>
+                      <p className="text-[11px] text-stone-500">{link.email}</p>
+                      <span className="inline-block mt-0.5 text-[10px] font-bold text-emerald-700">
+                        {link.role === "student" ? "Học sinh" : "Phụ huynh"} • Đã liên kết
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Bạn có chắc muốn hủy liên kết với ${link.name}? Dữ liệu học tập vẫn được giữ nguyên an toàn.`)) {
+                        unlinkAccountRequest(link.linkId);
+                      }
+                    }}
+                    title="Hủy liên kết"
+                    className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-xl cursor-pointer transition-colors"
+                  >
+                    <UserX className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -441,12 +607,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           </button>
         </div>
 
-        {/* 4 Key Metrics */}
+        {/* 4 Key Metrics - Real values, no fake fallbacks */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
           <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-100 text-center">
             <div className="text-2xl mb-1">⭐</div>
             <div className="font-display font-black text-xl sm:text-2xl text-emerald-950">
-              {profile?.knowledgePoints.toLocaleString() || "1,250"}
+              {profile ? profile.knowledgePoints.toLocaleString() : 0}
             </div>
             <div className="text-xs font-bold text-emerald-700">Điểm Tri Thức</div>
           </div>
@@ -454,7 +620,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-100 text-center">
             <div className="text-2xl mb-1">🪙</div>
             <div className="font-display font-black text-xl sm:text-2xl text-amber-950">
-              {profile?.coins || "380"}
+              {profile ? profile.coins : 0}
             </div>
             <div className="text-xs font-bold text-amber-700">Xu Tri Thức</div>
           </div>
@@ -462,7 +628,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           <div className="p-4 rounded-2xl bg-orange-50/70 border border-orange-100 text-center">
             <div className="text-2xl mb-1">🔥</div>
             <div className="font-display font-black text-xl sm:text-2xl text-orange-950">
-              {profile?.currentStreak || "7"} Ngày
+              {profile ? profile.currentStreak : 0} Ngày
             </div>
             <div className="text-xs font-bold text-orange-700">Chuỗi Ngày Học</div>
           </div>
@@ -470,7 +636,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-100 text-center">
             <div className="text-2xl mb-1">🧺</div>
             <div className="font-display font-black text-xl sm:text-2xl text-teal-950">
-              {profile?.totalHarvested || "7"} Mùa
+              {profile ? profile.totalHarvested : 0} Mùa
             </div>
             <div className="text-xs font-bold text-teal-700">Cây Đã Thu Hoạch</div>
           </div>
@@ -480,35 +646,51 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
         <div className="pt-4 border-t border-stone-100">
           <h3 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-3 flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-amber-500" />
-            <span>Huy hiệu danh dự đã đạt được</span>
+            <span>Huy hiệu danh dự</span>
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2.5">
+            <div className={`p-3 rounded-2xl border flex items-center gap-2.5 ${
+              (profile?.currentStreak ?? 0) >= 3 ? "bg-emerald-50 border-emerald-200" : "bg-stone-50 border-stone-200 opacity-60"
+            }`}>
               <span className="text-2xl">🌱</span>
               <div>
                 <div className="text-xs font-bold text-stone-900">Người chăm chỉ</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">Chuỗi 3 ngày</div>
+                <div className="text-[10px] text-emerald-600 font-semibold">
+                  {(profile?.currentStreak ?? 0) >= 3 ? "Đã đạt" : "Chuỗi 3 ngày"}
+                </div>
               </div>
             </div>
-            <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2.5">
+            <div className={`p-3 rounded-2xl border flex items-center gap-2.5 ${
+              (profile?.totalHarvested ?? 0) >= 5 ? "bg-emerald-50 border-emerald-200" : "bg-stone-50 border-stone-200 opacity-60"
+            }`}>
               <span className="text-2xl">🌳</span>
               <div>
                 <div className="text-xs font-bold text-stone-900">Trồng cây giỏi</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">5 cây trưởng thành</div>
+                <div className="text-[10px] text-emerald-600 font-semibold">
+                  {(profile?.totalHarvested ?? 0) >= 5 ? "Đã đạt" : "5 cây trưởng thành"}
+                </div>
               </div>
             </div>
-            <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2.5">
+            <div className={`p-3 rounded-2xl border flex items-center gap-2.5 ${
+              (profile?.knowledgePoints ?? 0) >= 500 ? "bg-emerald-50 border-emerald-200" : "bg-stone-50 border-stone-200 opacity-60"
+            }`}>
               <span className="text-2xl">📚</span>
               <div>
                 <div className="text-xs font-bold text-stone-900">Nhà thông thái</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">Điểm 10 liên tiếp</div>
+                <div className="text-[10px] text-emerald-600 font-semibold">
+                  {(profile?.knowledgePoints ?? 0) >= 500 ? "Đã đạt" : "500 điểm"}
+                </div>
               </div>
             </div>
-            <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2.5">
+            <div className={`p-3 rounded-2xl border flex items-center gap-2.5 ${
+              (profile?.currentStreak ?? 0) >= 7 ? "bg-emerald-50 border-emerald-200" : "bg-stone-50 border-stone-200 opacity-60"
+            }`}>
               <span className="text-2xl">🔥</span>
               <div>
                 <div className="text-xs font-bold text-stone-900">Chiến binh 7 ngày</div>
-                <div className="text-[10px] text-emerald-600 font-semibold">Đã mở khóa</div>
+                <div className="text-[10px] text-emerald-600 font-semibold">
+                  {(profile?.currentStreak ?? 0) >= 7 ? "Đã mở khóa" : "Chuỗi 7 ngày"}
+                </div>
               </div>
             </div>
           </div>

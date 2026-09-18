@@ -1,86 +1,51 @@
 import React, { useState, useEffect } from "react";
-import { getSupabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { GoogleSignInModal } from "./GoogleSignInModal";
 import { Mail, Lock, AlertCircle, ArrowRight, Sprout, CheckCircle2 } from "lucide-react";
 
 interface LoginPageProps {
   onNavigate: (path: string) => void;
   onLoginSuccess?: () => void;
-  onOpenConfig?: () => void;
   noticeMessage?: string | null;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onNavigate,
   onLoginSuccess,
-  onOpenConfig,
   noticeMessage,
 }) => {
-  const { signInWithGoogle, isConfigured } = useAuth();
+  const { signInWithGoogle, signInWithEmail } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
-  // Check URL parameters for OAuth error responses
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const hash = window.location.hash;
-      const search = window.location.search;
-      const urlParams = new URLSearchParams(search);
-      const hashParams = new URLSearchParams(hash.replace(/^#/, ""));
-
-      const error = urlParams.get("error") || hashParams.get("error");
-      const errorDesc = (urlParams.get("error_description") || hashParams.get("error_description") || "").toLowerCase();
-
-      if (error) {
-        if (error === "access_denied" || errorDesc.includes("cancel") || errorDesc.includes("denied")) {
-          setErrorMessage("Bạn đã hủy đăng nhập Google.");
-        } else if (errorDesc.includes("expired") || errorDesc.includes("timeout")) {
-          setErrorMessage("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
-        } else if (errorDesc.includes("linked") || errorDesc.includes("already registered")) {
-          setErrorMessage("Tài khoản Google đã được liên kết với tài khoản này.");
-        } else {
-          setErrorMessage("Không thể đăng nhập bằng Google. Vui lòng thử lại.");
-        }
-        // Clean URL to avoid repeated error on reload
-        window.history.replaceState(null, "", window.location.pathname);
-      }
-    }
-  }, []);
+  const [isGoogleModalOpen, setIsGoogleModalOpen] = useState(false);
 
   // Handle Google OAuth Sign In
   const handleGoogleSignIn = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
-
-    const supabase = getSupabase();
-    if (!supabase) {
-      setErrorMessage("Chưa cấu hình Supabase URL và Anon Key. Vui lòng nhấn cài đặt kết nối Supabase phía dưới.");
-      if (onOpenConfig) onOpenConfig();
-      return;
-    }
-
     setGoogleLoading(true);
 
     try {
       const result = await signInWithGoogle();
-      if (!result.success && result.error) {
-        const err = result.error.toLowerCase();
-        if (err.includes("cancel") || err.includes("denied")) {
-          setErrorMessage("Bạn đã hủy đăng nhập Google.");
-        } else if (err.includes("expired")) {
-          setErrorMessage("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
-        } else {
-          setErrorMessage("Không thể đăng nhập bằng Google. Vui lòng thử lại.");
-        }
-        setGoogleLoading(false);
+      if (result.success) {
+        setSuccessMessage("Đăng nhập Google thành công!");
+        if (onLoginSuccess) onLoginSuccess();
+        setTimeout(() => {
+          onNavigate("/dashboard");
+        }, 400);
+      } else if (result.error === "NO_CLIENT_ID") {
+        // Open Google sign-in modal
+        setIsGoogleModalOpen(true);
+      } else if (result.error) {
+        setErrorMessage(result.error);
       }
-      // If success, Supabase will redirect the browser to Google OAuth consent
     } catch (err: any) {
       setErrorMessage("Không thể đăng nhập bằng Google. Vui lòng thử lại.");
+    } finally {
       setGoogleLoading(false);
     }
   };
@@ -97,33 +62,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       return;
     }
 
-    const supabase = getSupabase();
-    if (!supabase) {
-      setErrorMessage("Chưa cấu hình Supabase URL và Anon Key. Vui lòng nhấn cài đặt kết nối Supabase phía dưới.");
-      if (onOpenConfig) onOpenConfig();
-      return;
-    }
-
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password: password,
-      });
-
-      if (error) {
-        const msg = error.message.toLowerCase();
-        if (msg.includes("email not confirmed") || msg.includes("email unconfirmed") || msg.includes("not confirmed")) {
-          setErrorMessage("Vui lòng xác nhận email trước khi đăng nhập.");
-        } else {
-          setErrorMessage("Email hoặc mật khẩu không chính xác.");
-        }
-        setLoading(false);
-        return;
-      }
-
-      if (data?.session && data?.user) {
+      const result = await signInWithEmail(trimmedEmail, password);
+      if (result.success) {
         setSuccessMessage("Đăng nhập thành công!");
         if (onLoginSuccess) {
           onLoginSuccess();
@@ -131,6 +74,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         setTimeout(() => {
           onNavigate("/dashboard");
         }, 400);
+      } else {
+        setErrorMessage(result.error || "Email hoặc mật khẩu không chính xác.");
       }
     } catch (err: any) {
       setErrorMessage("Email hoặc mật khẩu không chính xác.");
@@ -141,57 +86,55 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center py-10 px-4">
-      <div className="max-w-md w-full bg-white rounded-3xl p-6 sm:p-8 border border-emerald-100 shadow-xl relative">
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-3 shadow-inner">
-            <Sprout className="w-7 h-7 animate-bounce" />
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-emerald-100 p-6 sm:p-8 space-y-6 animate-in fade-in zoom-in-95">
+        {/* Header Branding */}
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-green-500 text-white shadow-md shadow-emerald-200 mb-1">
+            <Sprout className="w-7 h-7 animate-pulse" />
           </div>
           <h1 className="font-display font-black text-2xl sm:text-3xl text-stone-900 tracking-tight">
-            Đăng nhập vào Nông Trại Tri Thức
+            Chào mừng đến với Nông Trại Tri Thức 🌱
           </h1>
-          <p className="text-xs sm:text-sm text-stone-500 mt-1">
-            Đăng nhập để tiếp tục chăm sóc khu vườn tri thức và hoàn thành nhiệm vụ
+          <p className="text-xs sm:text-sm text-stone-500 italic">
+            “Đăng nhập để bắt đầu gieo mầm tri thức.”
           </p>
         </div>
 
-        {/* Notice Banner (e.g. redirected from protected page) */}
+        {/* Notice Message from route redirects */}
         {noticeMessage && !errorMessage && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1 font-semibold">{noticeMessage}</div>
+          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{noticeMessage}</span>
           </div>
         )}
 
-        {/* Error banner */}
+        {/* Error Notification */}
         {errorMessage && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-            <div className="flex-1 font-semibold">{errorMessage}</div>
+          <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span className="flex-1">{errorMessage}</span>
           </div>
         )}
 
-        {/* Success banner */}
+        {/* Success Notification */}
         {successMessage && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="flex-1 font-semibold">{successMessage}</div>
+          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 font-bold">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{successMessage}</span>
           </div>
         )}
 
-        {/* Section 2 & 6: Nút “Tiếp tục với Google” */}
-        <div className="mb-4">
+        {/* Primary Action: Official Google OAuth Button */}
+        <div>
           <button
             type="button"
+            id="google-login-button"
             onClick={handleGoogleSignIn}
-            disabled={googleLoading || loading}
-            className="w-full py-3 px-4 bg-white hover:bg-stone-50 text-stone-700 font-extrabold text-sm rounded-2xl border-2 border-stone-200 hover:border-emerald-300 shadow-xs hover:shadow-md transition-all flex items-center justify-center gap-3 cursor-pointer disabled:opacity-60"
+            disabled={googleLoading}
+            className="w-full py-3.5 px-4 rounded-2xl border-2 border-stone-200 hover:border-blue-500 bg-white hover:bg-stone-50/80 text-stone-800 font-extrabold text-sm flex items-center justify-center gap-3 shadow-xs hover:shadow-md transition-all cursor-pointer active:scale-[0.99]"
           >
             {googleLoading ? (
-              <span className="inline-flex items-center gap-2 text-stone-600">
-                <span className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                Đang chuyển đến Google...
-              </span>
+              <span className="text-xs text-stone-500">Đang mở Google OAuth...</span>
             ) : (
               <>
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
@@ -212,84 +155,74 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                   />
                 </svg>
-                <span>Tiếp tục với Google</span>
+                <span>🔵 Tiếp tục với Google</span>
               </>
             )}
           </button>
+          <p className="text-[11px] text-center text-stone-400 mt-2">
+            Đăng nhập tài khoản Google thật • Giữ nguyên điểm và cây đã trồng
+          </p>
         </div>
 
-        {/* Divider: ──────── hoặc ──────── */}
-        <div className="relative flex items-center justify-center my-5">
+        {/* Divider */}
+        <div className="relative flex items-center justify-center">
           <div className="border-t border-stone-200 w-full" />
-          <span className="bg-white px-3 text-xs text-stone-400 font-semibold shrink-0 uppercase tracking-wider">
-            hoặc
+          <span className="bg-white px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+            hoặc đăng nhập bằng email
           </span>
-          <div className="border-t border-stone-200 w-full" />
         </div>
 
-        {/* Email & Password Form */}
+        {/* Standard Email/Password Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email */}
           <div>
             <label className="block text-xs font-bold text-stone-700 mb-1.5">
-              Email <span className="text-red-500">*</span>
+              Địa chỉ Email
             </label>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-400">
-                <Mail className="w-4 h-4" />
-              </div>
+              <Mail className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="email@example.com"
-                className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all text-stone-800 placeholder:text-stone-400"
+                placeholder="tenban@gmail.com"
+                className="w-full pl-10 pr-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
               />
             </div>
           </div>
 
-          {/* Password */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-bold text-stone-700">
-                Mật khẩu <span className="text-red-500">*</span>
-              </label>
-              {/* Quên mật khẩu? */}
+              <label className="text-xs font-bold text-stone-700">Mật khẩu</label>
               <button
                 type="button"
                 onClick={() => onNavigate("/forgot-password")}
-                className="text-xs text-emerald-700 hover:text-emerald-800 font-semibold hover:underline cursor-pointer"
+                className="text-xs text-emerald-700 hover:underline font-semibold cursor-pointer"
               >
                 Quên mật khẩu?
               </button>
             </div>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-400">
-                <Lock className="w-4 h-4" />
-              </div>
+              <Lock className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Nhập mật khẩu"
-                className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all text-stone-800 placeholder:text-stone-400"
+                placeholder="••••••••"
+                className="w-full pl-10 pr-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
               />
             </div>
           </div>
 
-          {/* Submit Button: Đăng nhập */}
           <button
             type="submit"
-            disabled={loading || googleLoading}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold text-sm rounded-2xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
+            id="email-login-submit-btn"
+            disabled={loading}
+            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-2xl shadow-md shadow-emerald-700/20 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
           >
             {loading ? (
-              <span className="inline-flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Đang xác thực...
-              </span>
+              <span>Đang kiểm tra...</span>
             ) : (
               <>
                 <span>Đăng nhập</span>
@@ -297,33 +230,33 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </>
             )}
           </button>
-
-          {/* Link to Register: Đăng ký tài khoản */}
-          <div className="text-center pt-3 border-t border-stone-100">
-            <span className="text-xs text-stone-500">Chưa có tài khoản? </span>
-            <button
-              type="button"
-              onClick={() => onNavigate("/register")}
-              className="text-xs font-bold text-emerald-700 hover:underline cursor-pointer"
-            >
-              Đăng ký tài khoản
-            </button>
-          </div>
-
-          {/* Supabase connection quick config helper */}
-          {onOpenConfig && (
-            <div className="text-center pt-1">
-              <button
-                type="button"
-                onClick={onOpenConfig}
-                className="text-[11px] text-stone-400 hover:text-stone-700 underline cursor-pointer"
-              >
-                ⚙️ Hướng dẫn & Cài đặt Supabase / Google OAuth
-              </button>
-            </div>
-          )}
         </form>
+
+        {/* Footer Navigation */}
+        <div className="pt-2 text-center border-t border-stone-100">
+          <p className="text-xs text-stone-600">
+            Chưa có tài khoản nông trại?{" "}
+            <button
+              id="goto-register-btn"
+              onClick={() => onNavigate("/register")}
+              className="font-bold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer ml-1"
+            >
+              👤 Đăng ký tài khoản mới
+            </button>
+          </p>
+        </div>
       </div>
+
+      {/* Google Sign-in Modal */}
+      <GoogleSignInModal
+        isOpen={isGoogleModalOpen}
+        onClose={() => setIsGoogleModalOpen(false)}
+        onSuccess={() => {
+          if (onLoginSuccess) onLoginSuccess();
+          onNavigate("/dashboard");
+        }}
+        defaultRole="student"
+      />
     </div>
   );
 };

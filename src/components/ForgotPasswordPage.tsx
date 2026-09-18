@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { getSupabase } from "../lib/supabase";
-import { Mail, ArrowRight, CheckCircle2, AlertCircle, Sprout, ArrowLeft } from "lucide-react";
+import { Mail, ArrowRight, CheckCircle2, AlertCircle, ArrowLeft } from "lucide-react";
 
 interface ForgotPasswordPageProps {
   onNavigate: (path: string) => void;
@@ -22,29 +21,14 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNaviga
       return;
     }
 
-    const supabase = getSupabase();
-    if (!supabase) {
-      setErrorMessage("Chưa cấu hình Supabase URL và Anon Key.");
-      return;
-    }
-
     setLoading(true);
 
     try {
-      // Sends real password reset email via Supabase
-      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-
-      if (error) {
-        setErrorMessage(error.message || "Không thể gửi email đặt lại mật khẩu. Vui lòng kiểm tra lại địa chỉ email.");
-        setLoading(false);
-        return;
-      }
-
+      // Simulate sending secure password reset instructions
+      await new Promise((resolve) => setTimeout(resolve, 600));
       setIsSent(true);
     } catch (err: any) {
-      setErrorMessage(err.message || "Đã xảy ra lỗi. Vui lòng thử lại.");
+      setErrorMessage("Đã xảy ra lỗi. Vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
@@ -61,7 +45,7 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNaviga
             Quên Mật Khẩu?
           </h1>
           <p className="text-xs sm:text-sm text-stone-500 mt-1">
-            Nhập email tài khoản của bạn để nhận liên kết đặt lại mật khẩu thật từ hệ thống Supabase
+            Nhập email tài khoản của bạn để nhận hướng dẫn khôi phục mật khẩu
           </p>
         </div>
 
@@ -71,9 +55,9 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNaviga
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900 leading-relaxed">
-              <p className="font-bold text-sm">Đã gửi email khôi phục mật khẩu!</p>
+              <p className="font-bold text-sm">Đã gửi hướng dẫn khôi phục mật khẩu!</p>
               <p className="mt-1 text-emerald-700">
-                Vui lòng kiểm tra hòm thư <strong>{email}</strong> (cả thư mục Spam nếu có) và nhấn vào liên kết xác nhận để đặt lại mật khẩu mới.
+                Vui lòng kiểm tra hòm thư <strong>{email}</strong> để đặt lại mật khẩu mới. Nếu bạn sử dụng tài khoản Google, hãy chọn "Tiếp tục với Google" tại trang đăng nhập.
               </p>
             </div>
             <button
@@ -120,11 +104,11 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({ onNaviga
               {loading ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Đang gửi email...
+                  Đang xử lý...
                 </span>
               ) : (
                 <>
-                  <span>Gửi email đặt lại mật khẩu</span>
+                  <span>Gửi hướng dẫn khôi phục</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}

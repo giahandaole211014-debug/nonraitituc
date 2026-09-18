@@ -12,20 +12,112 @@ import {
   MessageSquare,
   Sparkles,
   Download,
+  Link as LinkIcon,
+  ArrowRight,
+  ShieldCheck,
 } from "lucide-react";
 import { ParentProfile, StudentProfile } from "../types";
+import { useAuth } from "../context/AuthContext";
 
 interface ParentDashboardViewProps {
   parent: ParentProfile;
   student: StudentProfile;
+  onNavigate?: (path: string) => void;
 }
 
 export const ParentDashboardView: React.FC<ParentDashboardViewProps> = ({
   parent,
   student,
+  onNavigate,
 }) => {
+  const { user, profile, linkingState, sendLinkRequest } = useAuth();
   const [activeTab, setActiveTab] = useState<"overview" | "history" | "weekly">("overview");
+  const [inputCode, setInputCode] = useState("");
+  const [linkMsg, setLinkMsg] = useState<string | null>(null);
 
+  // If user is a logged-in parent with 0 linked students:
+  const isUnlinkedParent = user && profile?.role === "parent" && linkingState.linkedAccounts.length === 0;
+
+  if (isUnlinkedParent) {
+    return (
+      <div className="max-w-2xl mx-auto py-12 px-4 animate-in fade-in">
+        <div className="bg-white rounded-3xl p-8 border border-blue-200 shadow-sm text-center space-y-6">
+          <div className="w-16 h-16 rounded-3xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto text-3xl">
+            👨👩👧
+          </div>
+          <div>
+            <h2 className="font-display font-black text-2xl text-stone-900">
+              Cổng Thông Tin Phụ Huynh Học Sinh
+            </h2>
+            <p className="text-xs sm:text-sm text-stone-600 mt-2 max-w-md mx-auto leading-relaxed">
+              <strong>Bảo mật dữ liệu học tập:</strong> Phụ huynh chỉ được xem dữ liệu học tập và nông trại của học sinh sau khi đã hoàn tất liên kết 2 chiều giữa tài khoản phụ huynh và học sinh.
+            </p>
+          </div>
+
+          <div className="p-5 rounded-2xl bg-amber-50/80 border border-amber-200 text-left space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+              <ShieldCheck className="w-4 h-4 text-amber-700" />
+              <span>Cách liên kết với tài khoản của con:</span>
+            </div>
+            <ol className="text-xs text-amber-800 space-y-1.5 list-decimal list-inside leading-relaxed">
+              <li>Nhờ con mở trang <strong>Hồ sơ</strong> trong tài khoản Nông Trại Tri Thức để lấy <strong>Mã liên kết</strong> (VD: HS-1234).</li>
+              <li>Nhập mã liên kết hoặc email của con vào ô bên dưới và gửi yêu cầu.</li>
+              <li>Con nhấn <strong>Chấp nhận</strong> trong tài khoản của mình để hoàn tất.</li>
+            </ol>
+          </div>
+
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!inputCode.trim()) return;
+              const res = await sendLinkRequest(inputCode.trim());
+              if (res.success) {
+                setLinkMsg("Đã gửi yêu cầu liên kết! Hãy nhắc con vào Hồ sơ cá nhân để chấp nhận.");
+                setInputCode("");
+              } else {
+                setLinkMsg(res.error || "Không thể gửi yêu cầu.");
+              }
+            }}
+            className="flex flex-col sm:flex-row gap-2 max-w-md mx-auto"
+          >
+            <input
+              type="text"
+              value={inputCode}
+              onChange={(e) => setInputCode(e.target.value)}
+              placeholder="Nhập mã liên kết của con (VD: HS-1234)..."
+              className="flex-1 px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+            />
+            <button
+              type="submit"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+            >
+              Gửi yêu cầu
+            </button>
+          </form>
+
+          {linkMsg && (
+            <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 py-2 px-3 rounded-xl border border-emerald-200">
+              {linkMsg}
+            </p>
+          )}
+
+          {onNavigate && (
+            <div>
+              <button
+                onClick={() => onNavigate("/profile")}
+                className="text-xs font-bold text-blue-700 hover:underline inline-flex items-center gap-1 cursor-pointer"
+              >
+                <span>Đi đến trang Quản lý hồ sơ & liên kết</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const linkedStudentName = linkingState.linkedAccounts[0]?.name || student.name;
   const wiltingCount = student.plants.filter((p) => p.health === "wilting").length;
 
   return (
@@ -42,7 +134,7 @@ export const ParentDashboardView: React.FC<ParentDashboardViewProps> = ({
               <span>👨👩👧</span> BẢNG ĐIỀU KHIỂN PHỤ HUYNH
             </h1>
             <p className="text-xs sm:text-sm text-stone-600 mt-1">
-              Đồng hành cùng con <strong className="text-blue-900 font-bold">{student.name}</strong> (Lớp {student.grade}) trên hành trình nuôi dưỡng tri thức.
+              Đồng hành cùng con <strong className="text-blue-900 font-bold">{linkedStudentName}</strong> (Lớp {student.grade}) trên hành trình nuôi dưỡng tri thức.
             </p>
           </div>
 

@@ -123,6 +123,7 @@ export interface TeacherFeedback {
 
 export interface AppNotification {
   id: string;
+  userId?: string;
   recipientRole: UserRole;
   studentId?: string;
   title: string;
@@ -184,4 +185,38 @@ export interface TeacherProfile {
   subject: string;
   classes: string[];
   students: TeacherStudentSummary[];
+}
+
+export interface UserProfile {
+  id: string;
+  googleId?: string;
+  email: string;
+  fullName: string;
+  avatarUrl?: string;
+  role: "student" | "parent";
+  grade?: number;
+  knowledgePoints: number;
+  coins: number;
+  currentStreak: number;
+  totalPlanted: number;
+  totalHarvested: number;
+  linkCode: string;
+  plants?: Plant[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountLink {
+  id: string;
+  requesterId: string;
+  requesterName: string;
+  requesterEmail: string;
+  requesterRole: "student" | "parent";
+  targetId: string;
+  targetName: string;
+  targetEmail: string;
+  targetRole: "student" | "parent";
+  status: "pending" | "active";
+  createdAt: string;
+  confirmedAt?: string;
 }

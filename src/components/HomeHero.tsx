@@ -13,6 +13,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { StudentProfile } from "../types";
+import { useAuth } from "../context/AuthContext";
 
 interface HomeHeroProps {
   student: StudentProfile;
@@ -25,6 +26,12 @@ export const HomeHero: React.FC<HomeHeroProps> = ({
   onNavigate,
   onOpenAuth,
 }) => {
+  const { user, profile } = useAuth();
+  const hasActiveProgress = Boolean(
+    user &&
+      profile &&
+      ((profile.knowledgePoints ?? 0) > 0 || (profile.totalHarvested ?? 0) > 0)
+  );
   const STAGES = [
     { icon: "🌰", name: "Hạt giống", desc: "Khởi đầu nhiệm vụ" },
     { icon: "🌱", name: "Mầm cây", desc: "Trả lời đúng 1 câu" },
@@ -189,7 +196,7 @@ export const HomeHero: React.FC<HomeHeroProps> = ({
             <div>
               <div className="font-bold text-sm text-amber-900">Khi trả lời CHƯA ĐÚNG</div>
               <p className="text-xs text-amber-800 mt-0.5">
-                Cây chỉ tạm thời héo nhẹ 🍂. Em được <strong>xem gợi ý và lời giải thích</strong> để học từ lỗi sai, rồi làm câu phục hồi để tưới nước cứu cây!
+                Cây chỉ tạm thời héo nhẹ. Em được xem gợi ý và lời giải thích để học từ lỗi sai, rồi làm câu phục hồi để tưới nước cứu cây!
               </p>
             </div>
           </div>
@@ -201,38 +208,55 @@ export const HomeHero: React.FC<HomeHeroProps> = ({
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-2xl">{student.avatar}</span>
+              <span className="text-2xl">🌱</span>
               <div>
                 <h3 className="font-display font-extrabold text-xl text-stone-900">
-                  Nông trại của {student.name} (Lớp {student.grade})
+                  {hasActiveProgress
+                    ? `Nông trại của ${profile?.fullName || user?.email?.split("@")[0]} 🌱`
+                    : "Nông trại của bạn 🌱"}
                 </h3>
                 <p className="text-xs text-stone-600">
-                  {student.levelTitle} • Cấp {student.level}
+                  {hasActiveProgress
+                    ? `${profile?.role === "parent" ? "Phụ huynh" : `Học sinh Lớp ${profile?.grade || 7}`} • Cấp ${Math.floor((profile?.knowledgePoints || 0) / 300) + 1}`
+                    : "Bắt đầu hành trình tri thức • Gieo hạt đầu tiên của bạn"}
                 </p>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-4 pt-2">
               <div className="bg-white/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-700">
-                ⭐ Điểm tri thức: <span className="font-extrabold text-emerald-700">{student.knowledgePoints.toLocaleString()}</span>
+                ⭐ Điểm tri thức:{" "}
+                <span className="font-extrabold text-emerald-700">
+                  {hasActiveProgress ? (profile?.knowledgePoints ?? 0).toLocaleString() : "0"}
+                </span>
               </div>
               <div className="bg-white/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-700">
-                🌱 Đang trồng: <span className="font-extrabold text-emerald-700">{student.plants.length} cây</span>
+                🌱 Đang trồng:{" "}
+                <span className="font-extrabold text-emerald-700">
+                  {hasActiveProgress ? `${student.plants.length} cây` : "0 cây"}
+                </span>
               </div>
               <div className="bg-white/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-700">
-                🧺 Đã thu hoạch: <span className="font-extrabold text-amber-700">{student.totalHarvested} mùa</span>
+                🧺 Đã thu hoạch:{" "}
+                <span className="font-extrabold text-amber-700">
+                  {hasActiveProgress ? `${profile?.totalHarvested ?? 0} mùa` : "0 mùa"}
+                </span>
               </div>
               <div className="bg-white/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-700">
-                🔥 Chuỗi học: <span className="font-extrabold text-orange-600">{student.currentStreak} ngày</span>
+                🔥 Chuỗi học:{" "}
+                <span className="font-extrabold text-orange-600">
+                  {hasActiveProgress ? `${profile?.currentStreak ?? 0} ngày` : "0 ngày"}
+                </span>
               </div>
             </div>
           </div>
 
           <button
-            onClick={() => onNavigate("farm")}
-            className="w-full md:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl shadow-md flex items-center justify-center gap-2 text-sm transition-all hover:scale-105"
+            id="hero-start-planting-btn"
+            onClick={() => onNavigate(hasActiveProgress ? "farm" : "tasks")}
+            className="w-full md:w-auto px-6 py-3.5 bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold rounded-2xl shadow-md shadow-emerald-700/20 flex items-center justify-center gap-2 text-sm transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0"
           >
-            Vào Nông Trại Chăm Cây ➔
+            {hasActiveProgress ? "Vào Nông Trại Chăm Cây ➔" : "🌱 Bắt đầu trồng cây →"}
           </button>
         </div>
       </section>
